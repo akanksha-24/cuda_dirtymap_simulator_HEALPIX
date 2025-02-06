@@ -3,6 +3,8 @@ import os
 import ctypes
 import time
 from numpy.ctypeslib import ndpointer
+import healpy as hp
+import h5py
 
 dms_lib = ctypes.CDLL(os.path.join(os.path.dirname(__file__),"dms.so"))
 cuda_dirtymap_function = dms_lib.dirtymap_caller
@@ -130,36 +132,67 @@ def dirtymap_simulator_wrapper (u, wavelengths, source_u, source_spectra, bright
     )
     return dirtymap
 
+def find_sources(hp_map, nside):
+    source_pix = []
+    spectra = []
+    for i in np.argwhere(hp_map!=0):
+        if (i[1] in source_pix)==0:
+            source_pix.append(i[1])
+            spectra.append(hp_map[:,i[1]])
+    source_us = np.asarray(hp.pix2vec(nside, source_pix)).T
+    spectra = np.asarray(spectra)
+    return source_us, spectra
+
+def read_healpix(fname):
+    hp_file = h5py.File(fname, "r")
+    in_map = hp_file['map'][:,0,:]
+    idx = hp_file['index_map']
+    f = idx['freq']['centre']
+    nf = in_map.shape[0]
+    npix = in_map.shape[1]
+    nside = hp.npix2nside(npix)
+    u = np.asarray(hp.pix2vec(nside, np.arange(npix))).T
+    source_us, spectra = find_sources(in_map, nside)
+    hp_file.close
+    return nf, f, u, source_us, spectra
+
 omega = 2*np.pi/(3600*24)
 
 if __name__ == "__main__":
     t1 = time.time()
-    nf = 32
-    f = np.linspace(get_coarse(z_to_center(0.00))-nf*channel_width,get_coarse(z_to_center(0.00)),nf, dtype=ctypes.c_float)[::-1]
+    #hp_file = '/home/akanksha/chord/cuda_dirtymap_simulator/input/One_Gal_10chan_1420_nside512.h5'
+    hp_file = '/home/akanksha/chord/H_GASP/products/VolLim_dec45_10000_nside512_nf350_1420_1350.h5'
+    nf, f, u, source_us, spectra  = read_healpix(hp_file)
+
+    #nf = 32
+    #f = np.linspace(get_coarse(z_to_center(0.00))-nf*channel_width,get_coarse(z_to_center(0.00)),nf, dtype=ctypes.c_float)[::-1]
     wavelengths = sol*1e3/(f*1e6)
     #test_wavelengths = np.asarray([0.21], dtype=ctypes.c_float)
 
-    base_theta = np.deg2rad(90-49.322)
-    base_phi = 0
-    nx = 200
-    ny = 200
-    extent1 = np.deg2rad(12) #np.deg2rad(5.0/60 * nx)
-    extent2 = np.deg2rad(3) #np.deg2rad(5.0/60 * ny)
+    #base_theta = np.deg2rad(90-49.322)
+    #base_phi = 0
+    #nx = 200
+    #ny = 200
+    #extent1 = np.deg2rad(12) #np.deg2rad(5.0/60 * nx)
+    #extent2 = np.deg2rad(3) #np.deg2rad(5.0/60 * ny)
 
-    spectra, source_us = generate_spectra (200,nf, base_theta, base_phi, extent2, extent1)
+    #spectra, source_us = generate_spectra (200,nf, base_theta, base_phi, extent2, extent1)
     #test_spectra = np.asarray([[6.0]],dtype=ctypes.c_float)
     #test_source_us = np.asarray([ang2vec(base_theta,0)], dtype=ctypes.c_float)
 
-    chord_thetas = np.asarray([np.deg2rad(90-49.322)], dtype=ctypes.c_float)
+    chord_thetas = np.asarray([np.deg2rad(90-45)], dtype=ctypes.c_float)
     cp = chordParams(thetas = unpackArraytoStruct(chord_thetas),
                     initial_phi_offset = np.deg2rad(10),
                      m1=22, m2=24, L1=8.5, L2=6.3, chord_zenith_dec = 49.322, D = 6.0,
                     delta_tau = np.deg2rad(0.5)/omega, time_samples=41)
 
-    u = get_tan_plane_pixelvecs(nx,ny, base_theta, base_phi, extent1, extent2).reshape([nx*ny,3]).astype(ctypes.c_float)
+    #u = get_tan_plane_pixelvecs(nx,ny, base_theta, base_phi, extent1, extent2).reshape([nx*ny,3]).astype(ctypes.c_float)
     #u = get_radec_pixelvecs(nx,ny)
 
-    dirtymap = dirtymap_simulator_wrapper (u, wavelengths, source_us, spectra, 0.01, cp)
-    np.savez("simulated_dirtymap.npz", dirtymap=dirtymap, frequencies=f)
+    dirtymap = dirtymap_simulator_wrapper (u.astype(ctypes.c_float), wavelengths.astype(ctypes.c_float), source_us, spectra, 1e-6, cp)
+    np.savez("output/VolLim_dec45_10000_nside512_nf350_1420_1350.npz", dirtymap=dirtymap, frequencies=f)
+
+    #dirtymap = dirtymap_simulator_wrapper (u, wavelengths, source_us, spectra, 0.01, cp)
+    #np.savez("simulated_dirtymap.npz", dirtymap=dirtymap, frequencies=f)
     t2 = time.time()
     print("Dirtymap simulator took", t2-t1, "seconds")
